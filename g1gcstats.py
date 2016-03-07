@@ -44,7 +44,7 @@ def _family_qual(family):
   return family.lower().strip('. \t\n\r').replace(' ', '_') + '.' if family else ''
 
 class G1GCMetrics(object):
-  def __init__(self, collectd, logdir=None, family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, pause_max=True, pause_threshold=None, verbose=False):
+  def __init__(self, collectd, logdir=None, family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, pause_max=True, pause_threshold=None, verbose=False, log_prefix="gc"):
     self.collectd = collectd
     self.logdir = logdir
     self.family = _family_qual(family)
@@ -56,6 +56,7 @@ class G1GCMetrics(object):
     self.pause_max = pause_max
     self.pause_threshold = pause_threshold
     self.verbose = verbose
+    self.log_prefix = log_prefix
 
     self.prev_log = None
     self.next_line = 0
@@ -77,6 +78,8 @@ class G1GCMetrics(object):
     for node in conf.children:
       if node.key == 'LogDir':
         self.logdir = node.values[0]
+      elif node.key == 'LogPrefix':
+        self.log_prefix = node.values[0]
       elif node.key == 'Family':
         self.family = _family_qual(node.values[0])
       elif node.key == 'MeasureEdenAvg':
@@ -112,7 +115,7 @@ class G1GCMetrics(object):
   def read_callback(self):
     """read the most-recently modified GC log in logdir, then return most recent datapoints from it"""
     if self.logdir:
-      gc_logs = sorted([self.logdir + os.sep + log for log in os.listdir(self.logdir) if log.startswith('gc-')], key=os.path.getmtime)
+      gc_logs = sorted([self.logdir + os.sep + log for log in os.listdir(self.logdir) if log.startswith(self.log_prefix)], key=os.path.getmtime)
       if gc_logs:
         new_metrics = self.read_recent_data_from_log(gc_logs[-1])
         if new_metrics:

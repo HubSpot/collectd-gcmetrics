@@ -14,3 +14,4 @@ Size and time metric units are bytes and milliseconds, respectively.
 - **`MeasureYoungPause`**: if `true`, record and send young GC count and pause time (`true`).
 - **`MeasureMaxPause`**: if `true`, record and send longest GC pause since last report (`true`).
 - **`LongPauseThreshold`**: (integer) if non-zero, count pauses longer than config ms (`1000`).
+- **`CountHumongousObjects`**: if `true`, count humongous objects allocated (`true`).

@@ -156,7 +156,7 @@ class G1GCMetrics(object):
             self.log_verbose("recording Eden size of %d bytes" % young_sz)
             edens.append(young_sz)
           if self.tenured:
-            old_sz = _to_bytes(match.group(after_heap_sz)) - young_sz
+            old_sz = _to_bytes(match.group(after_heap_sz)) - _to_bytes(match.group(after_survivor))
             self.log_verbose("recording Tenured size of %d bytes" % old_sz)
             tenures.append(old_sz)
           continue

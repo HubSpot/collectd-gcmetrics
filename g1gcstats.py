@@ -188,7 +188,7 @@ class G1GCMetrics(object):
         mixed_total : sum(mixed_pauses) if self.mixed_pause else None,
         young_count : len(young_pauses) if self.young_pause else None,
         young_total : sum(young_pauses) if self.young_pause else None,
-        max_pause   : max(mixed_pauses + young_pauses) if self.pause_max else None,
+        max_pause   : max(mixed_pauses + young_pauses if mixed_pauses or young_pauses else [0]) if self.pause_max else None,
         long_pause  : len(filter(lambda y: y > self.pause_threshold, mixed_pauses + young_pauses)) if self.pause_threshold else None
         }
     return metrics

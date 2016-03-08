@@ -11,6 +11,7 @@ young_count = 'counter.g1gc.younggc.count'
 young_total = 'counter.g1gc.younggc.time'
 max_pause   = 'gauge.g1gc.pause.time.max'
 long_pause  = 'counter.g1gc.longpause.count'
+humongous   = 'counter.g1gc.humongous.count'
 
 # G1GC log regexes:
 before_after = '([0-9\.]+[BKMG])->([0-9\.]+[BKMG])'
@@ -20,7 +21,7 @@ heap_pat = re.compile('\s*\[Eden: %s Survivors: %s Heap: %s' % (before_after_wca
 threshold_pat = re.compile('.*threshold: ([0-9]+) bytes .*, source: end of GC\]') # only need most recent
 gc_start_pat = re.compile('[0-9T\-\:\.\+]* [0-9\.]*: \[GC pause \(G1 Evacuation Pause\) \((young|mixed)\)') # use previous occurrence of this to track pause types
 pause_pat = re.compile('\s*\[Times: user=[0-9\.]+ sys=[0-9\.]+, real=([0-9\.]+) secs')
-#pause_pat = re.compile('[0-9T\-\:\.\+]* [0-9\.]*: Total time for which application threads were stopped: ([0-9\.]+) seconds, Stopping threads took: ([0-9\.]+) seconds')
+humongous_pat = re.compile('.* source: concurrent humongous allocation\]$')
 
 # groups for heap pat:
 before_eden_sz, before_eden_cap, after_eden_sz, after_eden_cap, before_survivor, after_survivor, before_heap_sz, before_heap_cap, after_heap_sz, after_heap_cap = range(1,11)
@@ -44,9 +45,10 @@ def _family_qual(family):
   return family.lower().strip('. \t\n\r').replace(' ', '_') + '.' if family else ''
 
 class G1GCMetrics(object):
-  def __init__(self, collectd, logdir=None, family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, pause_max=True, pause_threshold=None, verbose=False, log_prefix="gc"):
+  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False):
     self.collectd = collectd
     self.logdir = logdir
+    self.log_prefix = log_prefix
     self.family = _family_qual(family)
     self.eden = eden
     self.tenured = tenured
@@ -55,8 +57,8 @@ class G1GCMetrics(object):
     self.young_pause = young_pause
     self.pause_max = pause_max
     self.pause_threshold = pause_threshold
+    self.humongous_enabled = humongous_enabled
     self.verbose = verbose
-    self.log_prefix = log_prefix
 
     self.prev_log = None
     self.next_line = 0
@@ -70,7 +72,8 @@ class G1GCMetrics(object):
         young_count : 0,
         young_total : 0,
         max_pause   : None,
-        long_pause  : 0
+        long_pause  : 0,
+        humongous   : 0
         }
 
   def configure_callback(self, conf):
@@ -96,6 +99,8 @@ class G1GCMetrics(object):
         self.pause_max = bool(node.values[0])
       elif node.key == 'LongPauseThreshold':
         self.pause_threshold = int(node.values[0])
+      elif node.key == 'CountHumongousObjects':
+        self.humongous_enabled = bool(node.values[0])
       elif node.key == 'Verbose':
         self.verbose = bool(node.values[0])
       else:
@@ -109,7 +114,8 @@ class G1GCMetrics(object):
         young_count : 0 if self.young_pause else None,
         young_total : 0 if self.young_pause else None,
         max_pause   : None,
-        long_pause  : 0 if self.pause_threshold else None
+        long_pause  : 0 if self.pause_threshold else None,
+        humongous   : 0 if self.humongous_enabled else None
         }
 
   def read_callback(self):
@@ -146,6 +152,7 @@ class G1GCMetrics(object):
     threshold_bytes = 0
     mixed_pauses = []
     young_pauses = []
+    humongous_count = 0
     match = None
     for line in gc_lines:
       if self.eden or self.tenured:
@@ -180,6 +187,12 @@ class G1GCMetrics(object):
             mixed_pauses.append(pause_ms)
           else:
             young_pauses.append(pause_ms)
+          continue
+      if self.humongous_enabled:
+        match = humongous_pat.match(line)
+        if match:
+          humongous_count += 1
+          continue
     metrics = { 
         eden_avg    : _mean_rounded(edens) if (self.eden and edens) else None,
         tenured_avg : _mean_rounded(tenures) if (self.tenured and tenures) else None,
@@ -189,7 +202,8 @@ class G1GCMetrics(object):
         young_count : len(young_pauses) if self.young_pause else None,
         young_total : sum(young_pauses) if self.young_pause else None,
         max_pause   : max(mixed_pauses + young_pauses if mixed_pauses or young_pauses else [0]) if self.pause_max else None,
-        long_pause  : len(filter(lambda y: y > self.pause_threshold, mixed_pauses + young_pauses)) if self.pause_threshold else None
+        long_pause  : len(filter(lambda y: y > self.pause_threshold, mixed_pauses + young_pauses)) if self.pause_threshold else None,
+        humongous   : humongous_count if self.humongous_enabled else None
         }
     return metrics
 
@@ -273,7 +287,7 @@ class CollectdValuesMock(object):
 if __name__ == '__main__':
   from time import sleep
   collectd = CollectdMock('g1gc')
-  gc = G1GCMetrics(collectd, logdir='/mnt/hbase/logs/', pause_threshold=1000, verbose=True)
+  gc = G1GCMetrics(collectd, logdir='/tmp/logs/', pause_threshold=1000, verbose=True)
   gc.read_callback()
   for i in range (0,5):
     sleep(60)

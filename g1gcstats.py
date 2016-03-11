@@ -42,7 +42,7 @@ def _mean_rounded(values):
 
 # signalfx-formatted family metric prefix:
 def _family_qual(family):
-  return family.lower().strip('. \t\n\r').replace(' ', '_') + '.' if family else ''
+  return family.lower().strip('. \t\n\r').replace(' ', '_') if family else ''
 
 class G1GCMetrics(object):
   def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False):
@@ -236,12 +236,13 @@ class G1GCMetrics(object):
       value = metrics[metric]
       if value == None:
         continue
-      self.log_verbose('Sending value %s=%s' % (self.family+metric, value))
+      self.log_verbose('Sending value %s %s=%s' % (self.family, metric, value))
       
       data_type, type_instance = metric.split(".", 1)
       val = self.collectd.Values(plugin='g1gc')
       val.type = data_type
-      val.type_instance = self.family+type_instance
+      val.type_instance = type_instance
+      val.plugin_instance = self.family
       val.values = [value]
       val.dispatch()
 

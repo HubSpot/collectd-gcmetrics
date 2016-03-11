@@ -5,7 +5,7 @@ Size and time metric units are bytes and milliseconds, respectively.
 
 ####Configuration parameters (defaults refer to values in g1gcstats.conf):
 - **`LogDir`**: directory to find GC logs in (REQUIRED: no default).
-- **`Family`**: qualifier, name for the cluster type the plugin is running on (`""`).
+- **`Family`**: plugin\_instance value for the cluster type the plugin is running on (`""`).
 - **`Verbose`**: if `true`, print verbose logging (`false`).
 - **`MeasureEdenAvg`**: if `true`, record and send mean Eden size (`true`).
 - **`MeasureTenuredAvg`**: if `true`, record and send mean Tenured (Old Gen) size (`true`).

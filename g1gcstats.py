@@ -61,7 +61,7 @@ class G1GCMetrics(object):
     self.verbose = verbose
 
     self.prev_log = None
-    self.next_line = 0
+    self.log_seek = 0
     self.prev_gc_type = None
     self.current_metrics = {
         eden_avg    : None,
@@ -136,8 +136,9 @@ class G1GCMetrics(object):
     gc_lines = []
     f = open(logpath)
     try:
-      gc_lines = f.readlines()[self.next_line:]
-      self.next_line += len(gc_lines)
+      f.seek(log_seek)
+      gc_lines = f.readlines()
+      self.log_seek = f.tell()
     finally:
       f.close()
     if is_first_run:
@@ -209,7 +210,7 @@ class G1GCMetrics(object):
 
   def reset_log(self, logpath):
     self.prev_log = logpath
-    self.next_line = 0
+    self.log_seek = 0
     self.prev_gc_type = None
 
   def any_pause_metrics_enabled(self):

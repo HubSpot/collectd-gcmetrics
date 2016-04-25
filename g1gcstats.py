@@ -9,6 +9,7 @@ mixed_count = 'counter.g1gc.mixedgc.count'
 mixed_total = 'counter.g1gc.mixedgc.time'
 young_count = 'counter.g1gc.younggc.count'
 young_total = 'counter.g1gc.younggc.time'
+full_total  = 'gauge.g1gc.fullgc.time'
 max_pause   = 'gauge.g1gc.pause.time.max'
 long_pause  = 'counter.g1gc.longpause.count'
 humongous   = 'counter.g1gc.humongous.count'
@@ -20,6 +21,7 @@ before_after_wcap = '([0-9\.]+[BKMG])\(([0-9\.]+[BKMG])\)->([0-9\.]+[BKMG])\(([0
 heap_pat = re.compile('\s*\[Eden: %s Survivors: %s Heap: %s' % (before_after_wcap, before_after, before_after_wcap))
 threshold_pat = re.compile('.*threshold: ([0-9]+) bytes .*, source: end of GC\]') # only need most recent
 gc_start_pat = re.compile('[0-9T\-\:\.\+]* [0-9\.]*: \[GC pause \(G1 Evacuation Pause\) \((young|mixed)\)') # use previous occurrence of this to track pause types
+full_gc_pat = re.compile('[0-9T\-\:\.\+]* [0-9\.]*: \[Full GC ')
 pause_pat = re.compile('\s*\[Times: user=[0-9\.]+ sys=[0-9\.]+, real=([0-9\.]+) secs')
 humongous_pat = re.compile('.* source: concurrent humongous allocation\]$')
 
@@ -71,6 +73,7 @@ class G1GCMetrics(object):
         mixed_total : 0,
         young_count : 0,
         young_total : 0,
+        full_total  : None,
         max_pause   : None,
         long_pause  : 0,
         humongous   : 0
@@ -113,6 +116,7 @@ class G1GCMetrics(object):
         mixed_total : 0 if self.mixed_pause else None,
         young_count : 0 if self.young_pause else None,
         young_total : 0 if self.young_pause else None,
+        full_total  : None,
         max_pause   : None,
         long_pause  : 0 if self.pause_threshold else None,
         humongous   : 0 if self.humongous_enabled else None
@@ -136,7 +140,7 @@ class G1GCMetrics(object):
     gc_lines = []
     f = open(logpath)
     try:
-      f.seek(log_seek)
+      f.seek(self.log_seek)
       gc_lines = f.readlines()
       self.log_seek = f.tell()
     finally:
@@ -153,6 +157,7 @@ class G1GCMetrics(object):
     threshold_bytes = 0
     mixed_pauses = []
     young_pauses = []
+    full_pauses = []
     humongous_count = 0
     match = None
     for line in gc_lines:
@@ -179,6 +184,10 @@ class G1GCMetrics(object):
         if match:
           self.prev_gc_type = match.group(1)
           continue
+        match = full_gc_pat.match(line)
+        if match:
+          self.prev_gc_type = "full"
+          continue
       if self.any_pause_metrics_enabled():
         match = pause_pat.match(line)
         if match:
@@ -186,8 +195,10 @@ class G1GCMetrics(object):
           self.log_verbose("recording %d ms pause of type %s" % (pause_ms, self.prev_gc_type))
           if self.prev_gc_type == 'mixed':
             mixed_pauses.append(pause_ms)
-          else:
+          elif self.prev_gc_type == 'young':
             young_pauses.append(pause_ms)
+          else:
+            full_pauses.append(pause_ms)
           continue
       if self.humongous_enabled:
         match = humongous_pat.match(line)
@@ -202,8 +213,9 @@ class G1GCMetrics(object):
         mixed_total : sum(mixed_pauses) if self.mixed_pause else None,
         young_count : len(young_pauses) if self.young_pause else None,
         young_total : sum(young_pauses) if self.young_pause else None,
-        max_pause   : max(mixed_pauses + young_pauses if mixed_pauses or young_pauses else [0]) if self.pause_max else None,
-        long_pause  : len(filter(lambda y: y > self.pause_threshold, mixed_pauses + young_pauses)) if self.pause_threshold else None,
+        full_total  : sum(full_pauses) if (full_pauses and self.any_pause_metrics_enabled()) else None,
+        max_pause   : max(mixed_pauses + young_pauses + full_pauses if mixed_pauses or young_pauses or full_pauses else [0]) if self.pause_max else None,
+        long_pause  : len(filter(lambda y: y > self.pause_threshold, mixed_pauses + young_pauses + full_pauses)) if self.pause_threshold else None,
         humongous   : humongous_count if self.humongous_enabled else None
         }
     return metrics
@@ -221,6 +233,10 @@ class G1GCMetrics(object):
       match = gc_start_pat.match(line)
       if match:
         self.prev_gc_type = match.group(1)
+      else:
+        match = full_gc_pat.match(line)
+        if match:
+          self.prev_gc_type = "full"
 
   def update_metrics(self, new_metrics):
     """updates metrics from last run with new metrics, to make current"""

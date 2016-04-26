@@ -9,7 +9,8 @@ mixed_count = 'counter.g1gc.mixedgc.count'
 mixed_total = 'counter.g1gc.mixedgc.time'
 young_count = 'counter.g1gc.younggc.count'
 young_total = 'counter.g1gc.younggc.time'
-full_total  = 'gauge.g1gc.fullgc.time'
+full_count  = 'counter.g1gc.fullgc.count'
+full_total  = 'counter.g1gc.fullgc.time'
 max_pause   = 'gauge.g1gc.pause.time.max'
 long_pause  = 'counter.g1gc.longpause.count'
 humongous   = 'counter.g1gc.humongous.count'
@@ -47,7 +48,7 @@ def _family_qual(family):
   return family.lower().strip('. \t\n\r').replace(' ', '_') + '.' if family else ''
 
 class G1GCMetrics(object):
-  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False):
+  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, full_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False):
     self.collectd = collectd
     self.logdir = logdir
     self.log_prefix = log_prefix
@@ -57,6 +58,7 @@ class G1GCMetrics(object):
     self.ihop_threshold = ihop_threshold
     self.mixed_pause = mixed_pause
     self.young_pause = young_pause
+    self.full_pause = full_pause
     self.pause_max = pause_max
     self.pause_threshold = pause_threshold
     self.humongous_enabled = humongous_enabled
@@ -73,7 +75,8 @@ class G1GCMetrics(object):
         mixed_total : 0,
         young_count : 0,
         young_total : 0,
-        full_total  : None,
+        full_count  : 0,
+        full_total  : 0,
         max_pause   : None,
         long_pause  : 0,
         humongous   : 0
@@ -98,6 +101,8 @@ class G1GCMetrics(object):
         self.mixed_pause = bool(node.values[0])
       elif node.key == 'MeasureYoungPause':
         self.young_pause = bool(node.values[0])
+      elif node.key == 'MeasureFullPause':
+        self.full_pause = bool(node.values[0])
       elif node.key == 'MeasureMaxPause':
         self.pause_max = bool(node.values[0])
       elif node.key == 'LongPauseThreshold':
@@ -116,7 +121,8 @@ class G1GCMetrics(object):
         mixed_total : 0 if self.mixed_pause else None,
         young_count : 0 if self.young_pause else None,
         young_total : 0 if self.young_pause else None,
-        full_total  : None,
+        full_count  : 0 if self.full_pause else None,
+        full_total  : 0 if self.full_pause else None,
         max_pause   : None,
         long_pause  : 0 if self.pause_threshold else None,
         humongous   : 0 if self.humongous_enabled else None
@@ -179,7 +185,7 @@ class G1GCMetrics(object):
           threshold_bytes = int(match.group(1))
           self.log_verbose("recording tenured space threshold of %d bytes" % threshold_bytes)
           continue
-      if self.mixed_pause or self.young_pause:
+      if self.mixed_pause or self.young_pause or self.full_pause:
         match = gc_start_pat.match(line)
         if match:
           self.prev_gc_type = match.group(1)
@@ -213,7 +219,8 @@ class G1GCMetrics(object):
         mixed_total : sum(mixed_pauses) if self.mixed_pause else None,
         young_count : len(young_pauses) if self.young_pause else None,
         young_total : sum(young_pauses) if self.young_pause else None,
-        full_total  : sum(full_pauses) if (full_pauses and self.any_pause_metrics_enabled()) else None,
+        full_count  : len(full_pauses) if self.full_pause else None,
+        full_total  : sum(full_pauses) if self.full_pause else None,
         max_pause   : max(mixed_pauses + young_pauses + full_pauses if mixed_pauses or young_pauses or full_pauses else [0]) if self.pause_max else None,
         long_pause  : len(filter(lambda y: y > self.pause_threshold, mixed_pauses + young_pauses + full_pauses)) if self.pause_threshold else None,
         humongous   : humongous_count if self.humongous_enabled else None
@@ -226,7 +233,7 @@ class G1GCMetrics(object):
     self.prev_gc_type = None
 
   def any_pause_metrics_enabled(self):
-    return self.mixed_pause or self.young_pause or self.pause_max or self.pause_threshold
+    return self.mixed_pause or self.young_pause or self.full_pause or self.pause_max or self.pause_threshold
 
   def find_last_gc_type(self, gc_lines):
     for line in gc_lines:
@@ -306,7 +313,7 @@ if __name__ == '__main__':
   collectd = CollectdMock('g1gc')
   gc = G1GCMetrics(collectd, logdir='/tmp/logs/', pause_threshold=1000, verbose=True)
   gc.read_callback()
-  for i in range (0,5):
+  for i in range (0,2):
     sleep(60)
     gc.read_callback()
 else:

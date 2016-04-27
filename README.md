@@ -16,6 +16,7 @@ We use G1GC and the following JVM options for GC logging, and recommend you use 
 - **`MeasureIHOPThreshold`**: if `true`, record and send Old Gen mixed GC threshold (`true`).
 - **`MeasureMixedPause`**: if `true`, record and send mixed GC count and pause time (`true`).
 - **`MeasureYoungPause`**: if `true`, record and send young GC count and pause time (`true`).
+- **`MeasureFullPause`**: if `true`, record and send full GC count and pause time (`true`).
 - **`MeasureMaxPause`**: if `true`, record and send longest GC pause since last report (`true`).
 - **`LongPauseThreshold`**: (integer) if non-zero, count pauses longer than config ms (`1000`).
 - **`CountHumongousObjects`**: if `true`, count humongous objects allocated (`true`).

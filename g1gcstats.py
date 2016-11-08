@@ -34,7 +34,7 @@ mem_pat = re.compile('([0-9\.]+)([BKMG])')
 mem_factors = { 'B':0, 'K':1, 'M':2, 'G':3 }
 
 def _to_bytes(mem_amt):
-  match = mem_pat.match(mem_amt)
+  match = mem_pat.search(mem_amt)
   if match:
     return int(float(match.group(1)) * 1024 ** mem_factors[match.group(2)])
   else:
@@ -168,7 +168,7 @@ class G1GCMetrics(object):
     match = None
     for line in gc_lines:
       if self.eden or self.tenured:
-        match = heap_pat.match(line)
+        match = heap_pat.search(line)
         if match:
           young_sz = _to_bytes(match.group(after_eden_cap)) + _to_bytes(match.group(after_survivor))
           if self.eden:
@@ -180,22 +180,22 @@ class G1GCMetrics(object):
             tenures.append(old_sz)
           continue
       if self.ihop_threshold:
-        match = threshold_pat.match(line)
+        match = threshold_pat.search(line)
         if match:
           threshold_bytes = int(match.group(1))
           self.log_verbose("recording tenured space threshold of %d bytes" % threshold_bytes)
           continue
       if self.mixed_pause or self.young_pause or self.full_pause:
-        match = gc_start_pat.match(line)
+        match = gc_start_pat.search(line)
         if match:
           self.prev_gc_type = match.group(1)
           continue
-        match = full_gc_pat.match(line)
+        match = full_gc_pat.search(line)
         if match:
           self.prev_gc_type = "full"
           continue
       if self.any_pause_metrics_enabled():
-        match = pause_pat.match(line)
+        match = pause_pat.search(line)
         if match:
           pause_ms = int(round(float(match.group(1)) * 1000))
           self.log_verbose("recording %d ms pause of type %s" % (pause_ms, self.prev_gc_type))
@@ -207,7 +207,7 @@ class G1GCMetrics(object):
             full_pauses.append(pause_ms)
           continue
       if self.humongous_enabled:
-        match = humongous_pat.match(line)
+        match = humongous_pat.search(line)
         if match:
           humongous_count += 1
           continue
@@ -237,11 +237,11 @@ class G1GCMetrics(object):
 
   def find_last_gc_type(self, gc_lines):
     for line in gc_lines:
-      match = gc_start_pat.match(line)
+      match = gc_start_pat.search(line)
       if match:
         self.prev_gc_type = match.group(1)
       else:
-        match = full_gc_pat.match(line)
+        match = full_gc_pat.search(line)
         if match:
           self.prev_gc_type = "full"
 

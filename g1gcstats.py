@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import os, re
+import os, re, sys, time
 
 # metric names:
 eden_avg    = 'gauge.g1gc.eden.size'
@@ -145,7 +145,12 @@ class G1GCMetrics(object):
       self.reset_log(logpath)
     gc_lines = []
     f = open(logpath)
+    inode= os.fstat(f.fileno()).st_ino
     try:
+      if  os.stat(logpath).st_ino != inode:
+          f.close()
+          f = open(logpath)
+          inode = os.fstat(f.fileno()).st_ino
       f.seek(self.log_seek)
       gc_lines = f.readlines()
       self.log_seek = f.tell()

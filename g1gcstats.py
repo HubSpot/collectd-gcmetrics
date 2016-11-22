@@ -150,7 +150,8 @@ class G1GCMetrics(object):
       if  os.stat(logpath).st_ino != inode:
           f.close()
           f = open(logpath)
-          inode = os.fstat(f.fileno()).st_ino
+          inode = os.fstat(f.fileno()).st_in
+          self.reset_log(logpath)
       f.seek(self.log_seek)
       gc_lines = f.readlines()
       self.log_seek = f.tell()

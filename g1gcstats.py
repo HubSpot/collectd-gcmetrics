@@ -144,9 +144,12 @@ class G1GCMetrics(object):
     if logpath != self.prev_log:
       self.reset_log(logpath)
     gc_lines = []
-    f = open(logpath)
-    inode= os.fstat(f.fileno()).st_ino
     try:
+      f = open(logpath)
+    except:
+      sys.exit(1)
+    try:
+      inode= os.fstat(f.fileno()).st_ino
       if  os.stat(logpath).st_ino != inode:
           f.close()
           f = open(logpath)

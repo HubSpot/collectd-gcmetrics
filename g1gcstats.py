@@ -136,8 +136,13 @@ class G1GCMetrics(object):
         new_metrics = self.read_recent_data_from_log(gc_logs[-1])
         if new_metrics:
           self.dispatch_metrics(self.update_metrics(new_metrics))
+      else:
+        self.collectd.error('g1gc plugin: no gc_logs exiting')
+        sys.exit(1)
     else:
       self.collectd.warning('g1gc plugin: skipping because no log directory ("LogDir") has been configured')
+      sys.exit(1)
+
 
   def read_recent_data_from_log(self, logpath):
     is_first_run = self.prev_log == None
@@ -146,8 +151,9 @@ class G1GCMetrics(object):
     gc_lines = []
     try:
       f = open(logpath)
+      self.collectd.info('g1gc plugin: working')
     except:
-      sys.exit(1)
+      self.collectd.error('g1gc plugin: exiting')
     try:
       inode= os.fstat(f.fileno()).st_ino
       if  os.stat(logpath).st_ino != inode:

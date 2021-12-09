@@ -22,14 +22,7 @@ humongous   = 'counter.g1gc.humongous.count'
 class Parser(object):
   def __init__(self, config):
     self.config = config
-    self.prev_gc_type = config.prev_gc_type
-    self.edens = []
-    self.tenures = []
-    self.threshold_bytes = 0
-    self.mixed_pauses = []
-    self.young_pauses = []
-    self.full_pauses = []
-    self.humongous_count = 0
+    self.reset()
 
   def parse_heap(self, line):
       raise NotImplementedError('parse_heap not implemented')
@@ -45,6 +38,16 @@ class Parser(object):
 
   def parse_humongous_alloc(self, line):
     raise NotImplementedError('parse_humongous_alloc not implemented')
+
+  def reset(self):
+    self.prev_gc_type = self.config.prev_gc_type
+    self.edens = []
+    self.tenures = []
+    self.threshold_bytes = 0
+    self.mixed_pauses = []
+    self.young_pauses = []
+    self.full_pauses = []
+    self.humongous_count = 0
 
   def test(self, lines):
     for line in lines:
@@ -419,6 +422,7 @@ class G1GCMetrics(object):
     finally:
       if parser.prev_gc_type:
         self.prev_gc_type = parser.prev_gc_type
+      parser.reset()
 
   def reset_log(self, log_handle):
     self.prev_log = log_handle

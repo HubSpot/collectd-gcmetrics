@@ -51,7 +51,6 @@ class Parser(object):
       result = self.parse_gc_start(line)
       if result:
         self.prev_gc_type = result
-        self.config.prev_gc_type = result
 
   def parse(self, line):
     if self.config.eden or self.config.tenured:
@@ -72,15 +71,12 @@ class Parser(object):
         self.config.log_verbose("recording tenured space threshold of %d bytes" % self.threshold_bytes)
         return
 
-    if self.config.mixed_pause or self.config.young_pause or self.config.full_pause:
+    if self.config.any_pause_metrics_enabled():
       result = self.parse_gc_start(line)
       if result:
         self.prev_gc_type = result
-        self.config.prev_gc_type = result
-        return
 
-    # assumes that timings come after the gc start line
-    if self.config.any_pause_metrics_enabled():
+      # assumes that timings come after the gc start line
       result = self.parse_pause_time(line)
       if result is not None:
         if self.prev_gc_type == 'mixed':
@@ -229,6 +225,26 @@ class Java9PlusParser(Parser):
     return self.humongous_pat.match(line)
 
 
+class LogHandle(object):
+  def __init__(self, log_path):
+    self.log_path = log_path
+    stat = os.stat(log_path)
+    self.inode = stat.st_ino
+    self.size = stat.st_size
+
+  def is_new_file(self, other):
+    # handled cases: file name changes, inode changes, or file seems to have been truncated
+    return self.log_path != other.log_path or self.inode != other.inode or self.size < other.size
+
+  def fetch_from(self, offset):
+    with open(self.log_path, 'r') as f:
+      f.seek(offset)
+      return f.readlines(), f.tell()
+
+  def __repr__(self):
+      return 'path=%s, inode=%s, size=%s' % (self.log_path, self.inode, self.size)
+
+
 # memory string conversion to bytes:
 mem_pat = re.compile('([0-9\.]+)([BKMG])')
 mem_factors = { 'B':0, 'K':1, 'M':2, 'G':3 }
@@ -268,7 +284,7 @@ class G1GCMetrics(object):
     self.skip_first = skip_first
 
     self.prev_log = None
-    self.log_seek = 0
+    self.log_offset = 0
     self.prev_gc_type = None
     self.current_metrics = {
         eden_avg    : None,
@@ -340,7 +356,7 @@ class G1GCMetrics(object):
     if self.logdir:
       gc_logs = sorted([self.logdir + os.sep + log for log in os.listdir(self.logdir) if log.startswith(self.log_prefix)], key=os.path.getmtime)
       if gc_logs:
-        new_metrics = self.read_recent_data_from_log(gc_logs[-1])
+        new_metrics = self.read_recent_data_from_log(LogHandle(gc_logs[-1]))
         if new_metrics:
           self.dispatch_metrics(self.update_metrics(new_metrics))
     else:
@@ -352,36 +368,40 @@ class G1GCMetrics(object):
     # default to this because it actually works for all 9+
     return Java9PlusParser(self)
 
-  def read_recent_data_from_log(self, logpath):
+  def read_recent_data_from_log(self, log_handle):
     is_first_run = self.prev_log == None
-    if logpath != self.prev_log:
-      self.reset_log(logpath)
-    gc_lines = []
-    f = open(logpath)
-    try:
-      f.seek(self.log_seek)
-      gc_lines = f.readlines()
-      self.log_seek = f.tell()
-    finally:
-      f.close()
+
+    if is_first_run or log_handle.is_new_file(self.prev_log):
+      self.collectd.info('g1gc plugin: reading new log file: %s' % log_handle)
+      self.reset_log(log_handle)
+
+    # always update prev_log, so we keep the latest size
+    self.prev_log = log_handle
+
+    gc_lines, new_offset = log_handle.fetch_from(self.log_offset)
+    self.log_offset = new_offset
 
     parser = self.get_parser()
-    if is_first_run and self.skip_first:
-      # don't process full log (may have restarted recently, don't want to double-count
-      # instead, just run through the existing GC log, find type of the last GC (for next run)
-      parser.find_last_gc_type(gc_lines)
-      self.log_verbose("skipping metrics dispatch, since this is the first read since plugin restart")
-      return {}
+    try:
+      if is_first_run and self.skip_first:
+        # don't process full log (may have restarted recently, don't want to double-count
+        # instead, just run through the existing GC log, find type of the last GC (for next run)
+        parser.find_last_gc_type(gc_lines)
+        self.log_verbose("skipping metrics dispatch, since this is the first read since plugin restart")
+        return {}
 
-    # else, read metrics from logs as usual
-    for line in gc_lines:
-      parser.parse(line)
+      # else, read metrics from logs as usual
+      for line in gc_lines:
+        parser.parse(line)
 
-    return parser.to_metrics()
+      return parser.to_metrics()
+    finally:
+      if parser.prev_gc_type:
+        self.prev_gc_type = parser.prev_gc_type
 
-  def reset_log(self, logpath):
-    self.prev_log = logpath
-    self.log_seek = 0
+  def reset_log(self, log_handle):
+    self.prev_log = log_handle
+    self.log_offset = 0
     self.prev_gc_type = None
 
   def any_pause_metrics_enabled(self):

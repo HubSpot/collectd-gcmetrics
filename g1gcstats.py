@@ -20,8 +20,11 @@ humongous   = 'counter.g1gc.humongous.count'
 
 
 class Parser(object):
-  def __init__(self, config):
+  def __init__(self, module, config):
+    self.module = module
     self.config = config
+    # prev_gc_type explicitly does not get reset on every iteration
+    self.prev_gc_type = None
     self.reset()
 
   def parse_heap(self, line):
@@ -40,7 +43,6 @@ class Parser(object):
     raise NotImplementedError('parse_humongous_alloc not implemented')
 
   def reset(self):
-    self.prev_gc_type = self.config.prev_gc_type
     self.edens = []
     self.tenures = []
     self.threshold_bytes = 0
@@ -66,10 +68,10 @@ class Parser(object):
       result = self.parse_heap(line)
       if result:
         if self.config.eden:
-          self.config.log_verbose("recording Eden size of %d bytes" % result['young'])
+          self.module.log_verbose("recording Eden size of %d bytes" % result['young'])
           self.edens.append(result['young'])
         if self.config.tenured:
-          self.config.log_verbose("recording Tenured size of %d bytes" % result['old'])
+          self.module.log_verbose("recording Tenured size of %d bytes" % result['old'])
           self.tenures.append(result['old'])
         return
 
@@ -77,7 +79,7 @@ class Parser(object):
       result = self.parse_ihop_threshold(line)
       if result is not None:
         self.threshold_bytes = result
-        self.config.log_verbose("recording tenured space threshold of %d bytes" % self.threshold_bytes)
+        self.module.log_verbose("recording tenured space threshold of %d bytes" % self.threshold_bytes)
         return
 
     if self.config.any_pause_metrics_enabled():
@@ -140,8 +142,8 @@ class Java8Parser(Parser):
   pause_pat = re.compile('\s*\[Times: user=[0-9\.]+ sys=[0-9\.]+, real=([0-9\.]+) secs')
   humongous_pat = re.compile('.* source: concurrent humongous allocation\]$')
 
-  def __init__(self, config):
-    super(Java8Parser, self).__init__(config)
+  def __init__(self, module, config):
+    super(Java8Parser, self).__init__(module, config)
 
   def parse_heap(self, line):
       match = self.heap_pat.match(line)
@@ -183,8 +185,8 @@ class Java9PlusParser(Parser):
   pause_pat = re.compile(r'.*GC\(\d+\) User=[0-9\.]+s Sys=[0-9\.]+s Real=([0-9\.]+)s')
   humongous_pat = re.compile(r'.*GC\(\d+\) .* source: concurrent humongous allocation$')
 
-  def __init__(self, config):
-    super(Java9PlusParser, self).__init__(config)
+  def __init__(self, module, config):
+    super(Java9PlusParser, self).__init__(module, config)
 
     # used to collect multi-line heap sizing metrics below, will be reset after each block
     self.young_regions = 0
@@ -272,9 +274,23 @@ def _mean_rounded(values):
 def _family_qual(family):
   return family.lower().strip('. \t\n\r').replace(' ', '_') if family else ''
 
-class G1GCMetrics(object):
-  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, region_size_mb=1, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, full_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False, skip_first=True):
-    self.collectd = collectd
+class Config(object):
+  def __init__(self,
+      logdir=None,
+      log_prefix="gc",
+      family=None,
+      region_size_mb=1,
+      eden=True,
+      tenured=True,
+      ihop_threshold=True,
+      mixed_pause=True,
+      young_pause=True,
+      full_pause=True,
+      pause_max=True,
+      pause_threshold=None,
+      humongous_enabled=True,
+      verbose=False,
+      skip_first=True):
     self.logdir = logdir
     self.log_prefix = log_prefix
     self.family = _family_qual(family)
@@ -291,28 +307,28 @@ class G1GCMetrics(object):
     self.verbose = verbose
     self.skip_first = skip_first
 
-    self.parser = None
-    self.prev_log = None
-    self.log_offset = 0
-    self.prev_gc_type = None
+  def any_pause_metrics_enabled(self):
+    return self.mixed_pause or self.young_pause or self.full_pause or self.pause_max or self.pause_threshold
 
-    self.current_metrics = {
-        eden_avg    : None,
-        tenured_avg : None,
-        threshold   : None,
-        mixed_count : 0,
-        mixed_total : 0,
-        young_count : 0,
-        young_total : 0,
-        full_count  : 0,
-        full_total  : 0,
-        max_pause   : None,
-        long_pause  : 0,
-        humongous   : 0
-        }
+  def clone(self):
+    return Config(
+      self.logdir,
+      self.log_prefix,
+      self.family,
+      self.region_size_mb,
+      self.eden,
+      self.tenured,
+      self.ihop_threshold,
+      self.mixed_pause,
+      self.young_pause,
+      self.full_pause,
+      self.pause_max,
+      self.pause_threshold,
+      self.humongous_enabled,
+      self.verbose,
+      self.skip_first)
 
-  def configure_callback(self, conf):
-    """called by collectd to configure the plugin. This is called only once"""
+  def parse_config(self, conf):
     for node in conf.children:
       if node.key == 'LogDir':
         self.logdir = node.values[0]
@@ -344,25 +360,67 @@ class G1GCMetrics(object):
         self.verbose = bool(node.values[0])
       else:
         self.collectd.warning('g1gc plugin: Unknown config key: %s.' % (node.key))
+
+class G1GCMetricsPlugin(object):
+  def __init__(self, collectd, default_config):
+    self.collectd = collectd
+    self.default_config = default_config
+    self.modules = []
+
+  def configure_callback(self, conf):
+    module = G1GCMetricsModule(self.collectd, self.default_config.clone())
+    module.configure_callback(conf)
+    self.modules.append(module)
+
+  def read_callback(self):
+    for module in self.modules:
+      module.read_callback()
+
+class G1GCMetricsModule(object):
+  def __init__(self, collectd, config):
+    self.collectd = collectd
+    self.config = config
+
+    self.parser = None
+    self.prev_log = None
+    self.log_offset = 0
+
     self.current_metrics = {
         eden_avg    : None,
         tenured_avg : None,
         threshold   : None,
-        mixed_count : 0 if self.mixed_pause else None,
-        mixed_total : 0 if self.mixed_pause else None,
-        young_count : 0 if self.young_pause else None,
-        young_total : 0 if self.young_pause else None,
-        full_count  : 0 if self.full_pause else None,
-        full_total  : 0 if self.full_pause else None,
+        mixed_count : 0,
+        mixed_total : 0,
+        young_count : 0,
+        young_total : 0,
+        full_count  : 0,
+        full_total  : 0,
         max_pause   : None,
-        long_pause  : 0 if self.pause_threshold else None,
-        humongous   : 0 if self.humongous_enabled else None
+        long_pause  : 0,
+        humongous   : 0
         }
+
+  def configure_callback(self, conf):
+    self.config.parse_config(conf)
+    self.current_metrics = {
+        eden_avg    : None,
+        tenured_avg : None,
+        threshold   : None,
+        mixed_count : 0 if self.config.mixed_pause else None,
+        mixed_total : 0 if self.config.mixed_pause else None,
+        young_count : 0 if self.config.young_pause else None,
+        young_total : 0 if self.config.young_pause else None,
+        full_count  : 0 if self.config.full_pause else None,
+        full_total  : 0 if self.config.full_pause else None,
+        max_pause   : None,
+        long_pause  : 0 if self.config.pause_threshold else None,
+        humongous   : 0 if self.config.humongous_enabled else None
+      }
 
   def read_callback(self):
     """read the most-recently modified GC log in logdir, then return most recent datapoints from it"""
-    if self.logdir:
-      gc_logs = sorted([self.logdir + os.sep + log for log in os.listdir(self.logdir) if log.startswith(self.log_prefix)], key=os.path.getmtime)
+    if self.config.logdir:
+      gc_logs = sorted([os.path.join(self.config.logdir, log) for log in os.listdir(self.config.logdir) if log.startswith(self.config.log_prefix)], key=os.path.getmtime)
       if gc_logs:
         new_metrics = self.read_recent_data_from_log(LogHandle(gc_logs[-1]))
         if new_metrics:
@@ -374,13 +432,13 @@ class G1GCMetrics(object):
     if self.parser:
       return self.parser
 
-    parser = Java8Parser(self)
+    parser = Java8Parser(self, self.config)
     if parser.test(gc_lines):
       self.collectd.info("g1gc plugin: using Java8 gc log parser")
       self.parser = parser
       return self.parser
 
-    parser = Java9PlusParser(self)
+    parser = Java9PlusParser(self, self.config)
     if parser.test(gc_lines):
       self.collectd.info("g1gc plugin: using Java9+ gc log parser")
       self.parser = parser
@@ -407,7 +465,7 @@ class G1GCMetrics(object):
       return {}
 
     try:
-      if is_first_run and self.skip_first:
+      if is_first_run and self.config.skip_first:
         # don't process full log (may have restarted recently, don't want to double-count
         # instead, just run through the existing GC log, find type of the last GC (for next run)
         parser.find_last_gc_type(gc_lines)
@@ -420,17 +478,11 @@ class G1GCMetrics(object):
 
       return parser.to_metrics()
     finally:
-      if parser.prev_gc_type:
-        self.prev_gc_type = parser.prev_gc_type
       parser.reset()
 
   def reset_log(self, log_handle):
     self.prev_log = log_handle
     self.log_offset = 0
-    self.prev_gc_type = None
-
-  def any_pause_metrics_enabled(self):
-    return self.mixed_pause or self.young_pause or self.full_pause or self.pause_max or self.pause_threshold
 
   def update_metrics(self, new_metrics):
     """updates metrics from last run with new metrics, to make current"""
@@ -447,19 +499,19 @@ class G1GCMetrics(object):
       value = metrics[metric]
       if value == None:
         continue
-      self.log_verbose('Sending value %s %s=%s' % (self.family, metric, value))
+      self.log_verbose('Sending value %s %s=%s' % (self.config.family, metric, value))
       
       data_type, type_instance = metric.split(".", 1)
       val = self.collectd.Values(plugin='g1gc')
       val.type = data_type
       val.type_instance = type_instance
-      val.plugin_instance = self.family
+      val.plugin_instance = self.config.family
       val.values = [value]
       val.dispatch()
 
   def log_verbose(self, msg):
-    if self.verbose:
-      self.collectd.info('g1gc plugin [verbose]: '+msg)
+    if self.config.verbose:
+      self.collectd.info('g1gc plugin [verbose]: %s' % msg)
 
 # The following classes are copied from collectd-mapreduce/mapreduce_utils.py
 # to launch the plugin manually (./g1gcmetrics.py) for development
@@ -503,13 +555,13 @@ if __name__ == '__main__':
 
   from time import sleep
   collectd = CollectdMock('g1gc')
-  gc = G1GCMetrics(collectd, logdir=args.log_dir, pause_threshold=1000, verbose=True, skip_first=False)
+  gc = G1GCMetricsModule(collectd, Config(logdir=args.log_dir, pause_threshold=1000, verbose=True, skip_first=False))
   gc.read_callback()
   for i in range (0,2):
     sleep(60)
     gc.read_callback()
 else:
   import collectd
-  gc = G1GCMetrics(collectd)
+  gc = G1GCMetricsPlugin(collectd, Config())
   collectd.register_config(gc.configure_callback)
   collectd.register_read(gc.read_callback)

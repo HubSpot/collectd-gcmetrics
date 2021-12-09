@@ -46,6 +46,12 @@ class Parser(object):
   def parse_humongous_alloc(self, line):
     raise NotImplementedError('parse_humongous_alloc not implemented')
 
+  def test(self, lines):
+    for line in lines:
+      if self.parse_gc_start(line):
+        return True
+    return False
+
   def find_last_gc_type(self, lines):
     for line in lines:
       result = self.parse_gc_start(line)
@@ -264,9 +270,8 @@ def _family_qual(family):
   return family.lower().strip('. \t\n\r').replace(' ', '_') if family else ''
 
 class G1GCMetrics(object):
-  def __init__(self, collectd, jvm_version='8', logdir=None, log_prefix="gc", family=None, region_size_mb=1, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, full_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False, skip_first=True):
+  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, region_size_mb=1, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, full_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False, skip_first=True):
     self.collectd = collectd
-    self.jvm_version = jvm_version
     self.logdir = logdir
     self.log_prefix = log_prefix
     self.family = _family_qual(family)
@@ -283,9 +288,11 @@ class G1GCMetrics(object):
     self.verbose = verbose
     self.skip_first = skip_first
 
+    self.parser = None
     self.prev_log = None
     self.log_offset = 0
     self.prev_gc_type = None
+
     self.current_metrics = {
         eden_avg    : None,
         tenured_avg : None,
@@ -304,9 +311,7 @@ class G1GCMetrics(object):
   def configure_callback(self, conf):
     """called by collectd to configure the plugin. This is called only once"""
     for node in conf.children:
-      if node.key == 'JvmVersion':
-        self.jvm_version = node.values[0]
-      elif node.key == 'LogDir':
+      if node.key == 'LogDir':
         self.logdir = node.values[0]
       elif node.key == 'LogPrefix':
         self.log_prefix = node.values[0]
@@ -362,11 +367,24 @@ class G1GCMetrics(object):
     else:
       self.collectd.warning('g1gc plugin: skipping because no log directory ("LogDir") has been configured')
 
-  def get_parser(self):
-    if str(self.jvm_version) == '8':
-      return Java8Parser(self)
-    # default to this because it actually works for all 9+
-    return Java9PlusParser(self)
+  def get_parser(self, gc_lines):
+    if self.parser:
+      return self.parser
+
+    parser = Java8Parser(self)
+    if parser.test(gc_lines):
+      self.collectd.info("g1gc plugin: using Java8 gc log parser")
+      self.parser = parser
+      return self.parser
+
+    parser = Java9PlusParser(self)
+    if parser.test(gc_lines):
+      self.collectd.info("g1gc plugin: using Java9+ gc log parser")
+      self.parser = parser
+      return self.parser
+
+    self.collectd.warning('g1gc plugin: could not detect appropriate parser based on current content of gc logs, will try again at next interval')
+    return None
 
   def read_recent_data_from_log(self, log_handle):
     is_first_run = self.prev_log == None
@@ -381,7 +399,10 @@ class G1GCMetrics(object):
     gc_lines, new_offset = log_handle.fetch_from(self.log_offset)
     self.log_offset = new_offset
 
-    parser = self.get_parser()
+    parser = self.get_parser(gc_lines)
+    if not parser:
+      return {}
+
     try:
       if is_first_run and self.skip_first:
         # don't process full log (may have restarted recently, don't want to double-count
@@ -474,12 +495,11 @@ class CollectdValuesMock(object):
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Parse gc logs into collectd metrics - debug mode')
   parser.add_argument('--log-dir', '-d', metavar='PATH', default='/tmp/logs', help='path to directory with gc logs in them')
-  parser.add_argument('--jvm-version', '-j', metavar='VERSION', default=8, help='Which version of the jvm to run against', type=int)
   args = parser.parse_args()
 
   from time import sleep
   collectd = CollectdMock('g1gc')
-  gc = G1GCMetrics(collectd, jvm_version=args.jvm_version, logdir=args.log_dir, pause_threshold=1000, verbose=True, skip_first=False)
+  gc = G1GCMetrics(collectd, logdir=args.log_dir, pause_threshold=1000, verbose=True, skip_first=False)
   gc.read_callback()
   for i in range (0,2):
     sleep(60)

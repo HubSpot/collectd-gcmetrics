@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import os, re
+import argparse
 
 # metric names:
 eden_avg    = 'gauge.g1gc.eden.size'
@@ -310,9 +311,13 @@ class CollectdValuesMock(object):
     return "<CollectdValues %s>" % (' '.join(attrs))
 
 if __name__ == '__main__':
+  parser = argparse.ArgumentParser(description='Parse gc logs into collectd metrics - debug mode')
+  parser.add_argument('--log-dir', '-d', metavar='PATH', default='/tmp/logs', help='path to directory with gc logs in them')
+  args = parser.parse_args()
+
   from time import sleep
   collectd = CollectdMock('g1gc')
-  gc = G1GCMetrics(collectd, logdir='/tmp/logs/', pause_threshold=1000, verbose=True)
+  gc = G1GCMetrics(collectd, logdir=args.log_dir, pause_threshold=1000, verbose=True)
   gc.read_callback()
   for i in range (0,2):
     sleep(60)

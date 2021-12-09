@@ -49,7 +49,7 @@ def _family_qual(family):
   return family.lower().strip('. \t\n\r').replace(' ', '_') if family else ''
 
 class G1GCMetrics(object):
-  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, full_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False):
+  def __init__(self, collectd, logdir=None, log_prefix="gc", family=None, eden=True, tenured=True, ihop_threshold=True, mixed_pause=True, young_pause=True, full_pause=True, pause_max=True, pause_threshold=None, humongous_enabled=True, verbose=False, skip_first=True):
     self.collectd = collectd
     self.logdir = logdir
     self.log_prefix = log_prefix
@@ -64,6 +64,7 @@ class G1GCMetrics(object):
     self.pause_threshold = pause_threshold
     self.humongous_enabled = humongous_enabled
     self.verbose = verbose
+    self.skip_first = skip_first
 
     self.prev_log = None
     self.log_seek = 0
@@ -152,7 +153,7 @@ class G1GCMetrics(object):
       self.log_seek = f.tell()
     finally:
       f.close()
-    if is_first_run:
+    if is_first_run and self.skip_first:
       # don't process full log (may have restarted recently, don't want to double-count
       # instead, just run through the existing GC log, find type of the last GC (for next run)
       self.find_last_gc_type(gc_lines)
@@ -317,7 +318,7 @@ if __name__ == '__main__':
 
   from time import sleep
   collectd = CollectdMock('g1gc')
-  gc = G1GCMetrics(collectd, logdir=args.log_dir, pause_threshold=1000, verbose=True)
+  gc = G1GCMetrics(collectd, logdir=args.log_dir, pause_threshold=1000, verbose=True, skip_first=False)
   gc.read_callback()
   for i in range (0,2):
     sleep(60)

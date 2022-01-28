@@ -1,6 +1,5 @@
 #!/usr/bin/python
 import os, re
-import argparse
 
 MEGABYTES = 1024*1024
 
@@ -549,6 +548,7 @@ class CollectdValuesMock(object):
     return "<CollectdValues %s>" % (' '.join(attrs))
 
 if __name__ == '__main__':
+  import argparse
   parser = argparse.ArgumentParser(description='Parse gc logs into collectd metrics - debug mode')
   parser.add_argument('--log-dir', '-d', metavar='PATH', default='/tmp/logs', help='path to directory with gc logs in them')
   args = parser.parse_args()
